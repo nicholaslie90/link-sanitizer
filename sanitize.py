@@ -5,7 +5,9 @@ usage:  sanitize            # clean whatever is on the clipboard
         sanitize <url>      # clean an argument instead
         sanitize --test     # run self-checks (offline)
 """
+import os
 import re
+import ssl
 import subprocess
 import sys
 import urllib.error
@@ -28,7 +30,7 @@ DROP_EXACT = {
     "sc_channel", "sc_campaign", "sc_content", "sc_medium", "sc_outcome",
     "cvid", "ocid", "icid", "ncid", "wt_zmc", "rss_id", "sourceid",
     "smid", "smtyp", "ito", "cmp", "taid", "curator", "__twitter_impression",
-    "sref", "share", "shareid", "xtor", "at_recipient_id", "asgtbndr",
+    "sref", "share", "shareid", "xtor", "at_recipient_id", "asgtbndr", "xmt",
 }
 DROP_PREFIX = ("utm_", "utm~", "ga_", "hsa_", "pk_", "piwik_", "matomo_",
                "vero_", "at_custom", "at_medium", "wickedid", "oly_")
@@ -52,9 +54,19 @@ SHORTENERS = {
     "wp.me", "nyti.ms", "on.ft.com", "reut.rs", "econ.st", "bloom.bg",
     "apple.co", "msft.it", "tcrn.ch", "hubs.ly", "shar.es", "ift.tt",
 }
+# Share links on normal hosts: only this path prefix redirects.
+SHORT_PATHS = {"www.threads.com": "/share/", "threads.com": "/share/",
+               "www.threads.net": "/share/", "threads.net": "/share/"}
 
-UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " \
-     "(KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+# Bare UA on purpose: a full browser UA gets a JS/HTML page instead of a 302
+# from some hosts (Threads /share/), which leaves nothing to follow.
+UA = "Mozilla/5.0"
+# python.org builds ship without CA certs until "Install Certificates" is run;
+# without this every HTTPS resolve fails and the link comes back unchanged.
+_CA = "/etc/ssl/cert.pem"
+SSL_CTX = ssl.create_default_context(
+    cafile=None if os.path.exists(ssl.get_default_verify_paths().openssl_cafile)
+    or not os.path.exists(_CA) else _CA)
 AMAZON_ASIN = re.compile(r"/(?:dp|gp/product|gp/aw/d)/([A-Z0-9]{10})")
 
 
@@ -81,14 +93,16 @@ def _resolve(url, timeout=5.0):
     """Follow a shortener to its destination. Any failure -> original url."""
     for _ in range(5):
         parts = urlsplit(url)
-        if parts.hostname not in SHORTENERS:
+        host = parts.hostname or ""
+        if host not in SHORTENERS and not (
+                host in SHORT_PATHS and parts.path.startswith(SHORT_PATHS[host])):
             return url
         # ponytail: GET, not HEAD — plenty of shorteners/CDNs 404 or 405 on
         # HEAD. We never read the body, so it costs one round-trip of headers.
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         try:
             # urllib follows redirects itself; .url is the final landing spot.
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
                 nxt = r.url
         except urllib.error.HTTPError as e:
             nxt = e.url if e.url != url else (e.headers.get("Location") or "")
@@ -144,6 +158,7 @@ def _test():
     assert c("https://x.com/a#:~:text=hi") == "https://x.com/a"
     assert c("not a url") == "not a url"
     assert c("https://x.com/a") == "https://x.com/a"
+    assert c("https://www.threads.com/@u/post/Deg6?xmt=AQG0") == "https://www.threads.com/@u/post/Deg6"
     # nested wrapper: google -> facebook -> real
     assert c("https://www.google.com/url?q=https%3A%2F%2Fl.facebook.com%2Fl.php%3Fu%3Dhttps%253A%252F%252Fa.io%252Fb") \
         == "https://a.io/b"
