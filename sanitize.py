@@ -31,6 +31,7 @@ DROP_EXACT = {
     "cvid", "ocid", "icid", "ncid", "wt_zmc", "rss_id", "sourceid",
     "smid", "smtyp", "ito", "cmp", "taid", "curator", "__twitter_impression",
     "sref", "share", "shareid", "xtor", "at_recipient_id", "asgtbndr", "xmt",
+    "utm", "media_type",
 }
 DROP_PREFIX = ("utm_", "utm~", "ga_", "hsa_", "pk_", "piwik_", "matomo_",
                "vero_", "at_custom", "at_medium", "wickedid", "oly_")
@@ -148,6 +149,7 @@ def _test():
     c = lambda u: sanitize(u, network=False)
     assert c("https://x.com/a?utm_source=nl&utm_medium=e&id=7") == "https://x.com/a?id=7"
     assert c("https://x.com/a?fbclid=abc") == "https://x.com/a"
+    assert c("https://x.com/a?utm=facebook&media_type=image&id=7") == "https://x.com/a?id=7"
     assert c("https://youtu.be/dQw4?si=Xy&t=42") == "https://youtu.be/dQw4?t=42"
     assert c("https://www.google.com/url?q=https%3A%2F%2Fa.io%2Fb%3Fgclid%3D1&sa=U") \
         == "https://a.io/b"
